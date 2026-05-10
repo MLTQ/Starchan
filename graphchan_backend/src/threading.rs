@@ -1,0 +1,592 @@
+use crate::config::GraphchanPaths;
+use crate::database::models::{PostRecord, ThreadRecord};
+use crate::database::repositories::FileRepository;
+use crate::database::repositories::{PeerRepository, PostRepository, ThreadRepository};
+use crate::database::Database;
+use crate::utils::now_utc_iso;
+use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub struct ThreadService {
+    database: Database,
+    file_paths: Option<GraphchanPaths>,
+}
+
+impl ThreadService {
+    pub fn new(database: Database) -> Self {
+        Self {
+            database,
+            file_paths: None,
+        }
+    }
+
+    pub fn with_file_paths(database: Database, file_paths: GraphchanPaths) -> Self {
+        Self {
+            database,
+            file_paths: Some(file_paths),
+        }
+    }
+
+    pub fn list_threads(&self, limit: usize) -> Result<Vec<ThreadSummary>> {
+        self.database.with_repositories(|repos| {
+            let threads = repos.threads().list_recent(limit)?;
+            let mut summaries = Vec::with_capacity(threads.len());
+
+            for thread in threads {
+                // Get first image from the thread's first post
+                let first_image = repos
+                    .posts()
+                    .list_for_thread(&thread.id)?
+                    .into_iter()
+                    .next() // Get first post (OP)
+                    .and_then(|post| {
+                        // Get files for the OP post
+                        repos.files().list_for_post(&post.id).ok()
+                    })
+                    .and_then(|files| {
+                        // Find first image file
+                        files
+                            .into_iter()
+                            .find(|f| {
+                                f.mime
+                                    .as_ref()
+                                    .map(|m| m.starts_with("image/"))
+                                    .unwrap_or(false)
+                            })
+                            .map(|record| {
+                                let mut view = crate::files::FileView::from_record(record.clone());
+                                // Set present flag if file_paths is available
+                                if let Some(ref base) = self.file_paths {
+                                    let absolute = base.base.join(&record.path);
+                                    view.present = Some(absolute.exists());
+                                }
+                                view
+                            })
+                    });
+
+                // Load topics for this thread
+                use crate::database::repositories::TopicRepository;
+                let topics = repos
+                    .topics()
+                    .list_thread_topics(&thread.id)
+                    .unwrap_or_default();
+
+                summaries.push(ThreadSummary {
+                    id: thread.id,
+                    title: thread.title,
+                    creator_peer_id: thread.creator_peer_id,
+                    created_at: thread.created_at,
+                    pinned: thread.pinned,
+                    visibility: thread.visibility,
+                    topic_secret: thread.topic_secret,
+                    sync_status: thread.sync_status,
+                    first_image_file: first_image,
+                    topics,
+                    source_url: thread.source_url,
+                    source_platform: thread.source_platform,
+                    last_refreshed_at: thread.last_refreshed_at,
+                });
+            }
+
+            Ok(summaries)
+        })
+    }
+
+    pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadDetails>> {
+        self.database.with_repositories(|repos| {
+            let thread = repos.threads().get(thread_id)?;
+            let Some(thread) = thread else {
+                return Ok(None);
+            };
+            let posts_repo = repos.posts();
+            let posts = posts_repo.list_for_thread(thread_id)?;
+            let mut views = Vec::with_capacity(posts.len());
+            let mut peer_ids = std::collections::HashSet::new();
+
+            if let Some(creator) = &thread.creator_peer_id {
+                peer_ids.insert(creator.clone());
+            }
+
+            for post in posts {
+                if let Some(author) = &post.author_peer_id {
+                    peer_ids.insert(author.clone());
+                }
+                let parents = posts_repo.parents_of(&post.id)?;
+                let files = repos.files().list_for_post(&post.id)?;
+                let file_views = files
+                    .into_iter()
+                    .map(|record| {
+                        let mut view = crate::files::FileView::from_record(record.clone());
+                        // Set present flag if file_paths is available
+                        if let Some(ref base) = self.file_paths {
+                            let absolute = base.base.join(&record.path);
+                            view.present = Some(absolute.exists());
+                        }
+                        view
+                    })
+                    .collect();
+                views.push(PostView::from_record(post, parents, file_views));
+            }
+
+            let mut peers = Vec::new();
+            let peer_repo = repos.peers();
+            for peer_id in peer_ids {
+                if let Some(record) = peer_repo.get(&peer_id)? {
+                    peers.push(crate::peers::PeerView::from_record(record));
+                }
+            }
+
+            Ok(Some(ThreadDetails {
+                thread: ThreadSummary::from_record(thread),
+                posts: views,
+                peers,
+            }))
+        })
+    }
+
+    pub fn get_post(&self, post_id: &str) -> Result<Option<PostView>> {
+        self.database.with_repositories(|repos| {
+            let posts_repo = repos.posts();
+            let post = posts_repo.get(post_id)?;
+            let Some(post) = post else {
+                return Ok(None);
+            };
+            let parents = posts_repo.parents_of(post_id)?;
+            let files = repos.files().list_for_post(post_id)?;
+            let file_views = files
+                .into_iter()
+                .map(|record| {
+                    let mut view = crate::files::FileView::from_record(record.clone());
+                    // Set present flag if file_paths is available
+                    if let Some(ref base) = self.file_paths {
+                        let absolute = base.base.join(&record.path);
+                        view.present = Some(absolute.exists());
+                    }
+                    view
+                })
+                .collect();
+            Ok(Some(PostView::from_record(post, parents, file_views)))
+        })
+    }
+
+    pub fn create_thread(&self, input: CreateThreadInput) -> Result<ThreadDetails> {
+        if input.title.trim().is_empty() {
+            anyhow::bail!("thread title may not be empty");
+        }
+        let thread_id = Uuid::new_v4().to_string();
+        let created_at = input.created_at.unwrap_or_else(now_utc_iso);
+        let thread_record = ThreadRecord {
+            id: thread_id.clone(),
+            title: input.title,
+            creator_peer_id: input.creator_peer_id.clone(),
+            created_at: created_at.clone(),
+            pinned: input.pinned.unwrap_or(false),
+            thread_hash: None, // Will be calculated after posts are added
+            visibility: input.visibility.unwrap_or_else(|| "social".to_string()),
+            topic_secret: None,
+            sync_status: "downloaded".to_string(), // Locally created thread
+            source_url: None,
+            source_platform: None,
+            last_refreshed_at: None,
+        };
+
+        let initial_post_body = input.body.clone();
+        let author_peer_id = input.creator_peer_id.clone();
+        let topics = input.topics.clone();
+
+        self.database.with_repositories(|repos| {
+            use crate::database::repositories::TopicRepository;
+
+            repos.threads().create(&thread_record)?;
+
+            // Save topic associations
+            for topic_id in &topics {
+                repos.topics().add_thread_topic(&thread_id, topic_id)?;
+            }
+
+            if let Some(body) = initial_post_body {
+                if !body.trim().is_empty() {
+                    // Look up author's short friend code if we have an author_peer_id
+                    let author_friendcode = if let Some(ref author_id) = author_peer_id {
+                        if let Some(peer) = repos.peers().get(author_id)? {
+                            // Reconstruct short friend code from peer record
+                            if let (Some(iroh_peer_id), Some(gpg_fingerprint)) =
+                                (&peer.iroh_peer_id, &peer.gpg_fingerprint)
+                            {
+                                Some(crate::identity::encode_short_friendcode(
+                                    iroh_peer_id,
+                                    gpg_fingerprint,
+                                ))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let post_record = PostRecord {
+                        id: Uuid::new_v4().to_string(),
+                        thread_id: thread_id.clone(),
+                        author_peer_id,
+                        author_friendcode,
+                        body,
+                        created_at: created_at.clone(),
+                        updated_at: None,
+                        metadata: None,
+                    };
+                    repos.posts().create(&post_record)?;
+                }
+            }
+            Ok(())
+        })?;
+
+        self.get_thread(&thread_id)
+            .and_then(|opt| opt.context("thread creation lost newly inserted record"))
+    }
+
+    pub fn create_post(&self, input: CreatePostInput) -> Result<PostView> {
+        if input.body.trim().is_empty() {
+            anyhow::bail!("post body may not be empty");
+        }
+
+        // Look up author's full friend code (v2 legacy format with multiaddrs for IP extraction)
+        let author_friendcode = if let Some(author_id) = &input.author_peer_id {
+            self.database.with_repositories(|repos| {
+                if let Some(peer) = repos.peers().get(author_id)? {
+                    // Use the stored friendcode if available (contains multiaddrs with IPs)
+                    if let Some(fc) = peer.friendcode {
+                        Ok(Some(fc))
+                    } else {
+                        // Fallback: generate v2 friendcode if we have the required fields
+                        if let (Some(iroh_peer_id), Some(gpg_fingerprint)) =
+                            (&peer.iroh_peer_id, &peer.gpg_fingerprint) {
+                            // Generate v2 friendcode with multiaddrs
+                            let x25519_pubkey = peer.x25519_pubkey.as_deref();
+                            match crate::identity::encode_friendcode(iroh_peer_id, gpg_fingerprint, x25519_pubkey) {
+                                Ok(fc) => Ok(Some(fc)),
+                                Err(err) => {
+                                    tracing::warn!(error = ?err, "failed to generate friendcode for post");
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    Ok(None)
+                }
+            })?
+        } else {
+            None
+        };
+
+        // Serialize metadata to JSON if present
+        let metadata_json = input
+            .metadata
+            .as_ref()
+            .and_then(|meta| serde_json::to_string(meta).ok());
+
+        let post_record = PostRecord {
+            id: Uuid::new_v4().to_string(),
+            thread_id: input.thread_id.clone(),
+            author_peer_id: input.author_peer_id.clone(),
+            author_friendcode,
+            body: input.body,
+            created_at: input.created_at.unwrap_or_else(now_utc_iso),
+            updated_at: None,
+            metadata: metadata_json,
+        };
+
+        let stored_post = self.database.with_repositories(|repos| {
+            // ensure thread exists
+            if repos.threads().get(&post_record.thread_id)?.is_none() {
+                anyhow::bail!("thread not found");
+            }
+
+            // Update thread's rebroadcast flag
+            repos
+                .threads()
+                .set_rebroadcast(&post_record.thread_id, input.rebroadcast)?;
+
+            let posts_repo = repos.posts();
+            posts_repo.create(&post_record)?;
+            posts_repo.add_relationships(&post_record.id, &input.parent_post_ids)?;
+            Ok(post_record.clone())
+        })?;
+
+        // Parse metadata JSON if present
+        let metadata = stored_post
+            .metadata
+            .as_ref()
+            .and_then(|json_str| serde_json::from_str::<PostMetadata>(json_str).ok());
+
+        Ok(PostView {
+            id: stored_post.id,
+            thread_id: stored_post.thread_id,
+            author_peer_id: stored_post.author_peer_id,
+            author_friendcode: stored_post.author_friendcode,
+            body: stored_post.body,
+            created_at: stored_post.created_at,
+            updated_at: stored_post.updated_at,
+            parent_post_ids: input.parent_post_ids,
+            files: Vec::new(),
+            thread_hash: None, // Only populated for network broadcast
+            metadata,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub id: String,
+    pub title: String,
+    pub creator_peer_id: Option<String>,
+    pub created_at: String,
+    pub pinned: bool,
+    pub visibility: String,
+    pub topic_secret: Option<String>,
+    pub sync_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_image_file: Option<crate::files::FileView>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_refreshed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostView {
+    pub id: String,
+    pub thread_id: String,
+    pub author_peer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_friendcode: Option<String>,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+    pub parent_post_ids: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<crate::files::FileView>,
+    /// Thread hash for synchronization - allows peers to detect they're out of sync
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_hash: Option<String>,
+    /// Post metadata (agent info, client info, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<PostMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadDetails {
+    pub thread: ThreadSummary,
+    pub posts: Vec<PostView>,
+    pub peers: Vec<crate::peers::PeerView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreateThreadInput {
+    pub title: String,
+    pub body: Option<String>,
+    pub creator_peer_id: Option<String>,
+    pub pinned: Option<bool>,
+    /// Optional timestamp for imported threads. If None, uses current time.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Thread visibility: "social" (friends only), "private" (encrypted), or "global" (public discovery)
+    /// DEPRECATED: Use topics field instead
+    #[serde(default)]
+    pub visibility: Option<String>,
+    /// List of topic IDs to announce this thread on (for public discovery)
+    #[serde(default)]
+    pub topics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreatePostInput {
+    pub thread_id: String,
+    pub author_peer_id: Option<String>,
+    pub body: String,
+    #[serde(default)]
+    pub parent_post_ids: Vec<String>,
+    /// Optional timestamp for imported posts. If None, uses current time.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Whether to rebroadcast this thread to peers (Host mode)
+    #[serde(default = "default_rebroadcast")]
+    pub rebroadcast: bool,
+    /// Post metadata (agent info, client info, etc.)
+    #[serde(default)]
+    pub metadata: Option<PostMetadata>,
+}
+
+fn default_rebroadcast() -> bool {
+    true // Default to Host mode
+}
+
+impl ThreadSummary {
+    fn from_record(record: ThreadRecord) -> Self {
+        Self {
+            id: record.id,
+            title: record.title,
+            creator_peer_id: record.creator_peer_id,
+            created_at: record.created_at,
+            pinned: record.pinned,
+            visibility: record.visibility,
+            topic_secret: record.topic_secret,
+            sync_status: record.sync_status,
+            first_image_file: None, // Not populated in from_record
+            topics: Vec::new(),     // Not populated in from_record
+            source_url: record.source_url,
+            source_platform: record.source_platform,
+            last_refreshed_at: record.last_refreshed_at,
+        }
+    }
+}
+
+impl PostView {
+    fn from_record(
+        record: PostRecord,
+        parent_post_ids: Vec<String>,
+        files: Vec<crate::files::FileView>,
+    ) -> Self {
+        // Parse metadata JSON if present
+        let metadata = record
+            .metadata
+            .as_ref()
+            .and_then(|json_str| serde_json::from_str::<PostMetadata>(json_str).ok());
+
+        Self {
+            id: record.id,
+            thread_id: record.thread_id,
+            author_peer_id: record.author_peer_id,
+            author_friendcode: record.author_friendcode,
+            body: record.body,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            parent_post_ids,
+            files,
+            thread_hash: None, // Only populated for network broadcast
+            metadata,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use rusqlite::Connection;
+
+    fn setup_service() -> ThreadService {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let db = Database::from_connection(conn, true);
+        db.ensure_migrations().expect("migrations");
+        ThreadService::new(db)
+    }
+
+    #[test]
+    fn thread_creation_creates_initial_post() {
+        let service = setup_service();
+        let details = service
+            .create_thread(CreateThreadInput {
+                title: "Example".into(),
+                body: Some("Hello".into()),
+                creator_peer_id: None,
+                pinned: None,
+                created_at: None,
+                visibility: None,
+                topics: vec![],
+            })
+            .expect("create thread");
+        assert_eq!(details.thread.title, "Example");
+        assert_eq!(details.posts.len(), 1);
+        assert_eq!(details.posts[0].body, "Hello");
+    }
+
+    #[test]
+    fn create_post_appends_to_thread() {
+        let service = setup_service();
+        let details = service
+            .create_thread(CreateThreadInput {
+                title: "Thread".into(),
+                body: None,
+                creator_peer_id: None,
+                pinned: None,
+                created_at: None,
+                visibility: None,
+                topics: vec![],
+            })
+            .expect("create thread");
+
+        let post = service
+            .create_post(CreatePostInput {
+                thread_id: details.thread.id.clone(),
+                author_peer_id: None,
+                body: "Reply".into(),
+                parent_post_ids: vec![],
+                created_at: None,
+                ..Default::default()
+            })
+            .expect("create post");
+        assert_eq!(post.body, "Reply");
+
+        let fetched = service
+            .get_thread(&details.thread.id)
+            .expect("fetch thread")
+            .expect("thread exists");
+        assert_eq!(fetched.posts.len(), 1);
+        assert_eq!(fetched.posts[0].body, "Reply");
+    }
+}
+
+/// Calculate a hash for a single post (for sync purposes)
+pub fn calculate_post_hash(post: &PostView) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(post.id.as_bytes());
+    hasher.update(post.body.as_bytes());
+    hasher.update(post.created_at.as_bytes());
+    if let Some(updated) = &post.updated_at {
+        hasher.update(updated.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+/// Calculate a thread hash from all post hashes (for sync detection)
+pub fn calculate_thread_hash(posts: &[PostView]) -> String {
+    let mut hasher = blake3::Hasher::new();
+
+    // Sort posts by created_at to ensure consistent ordering
+    let mut sorted_posts: Vec<&PostView> = posts.iter().collect();
+    sorted_posts.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    for post in sorted_posts {
+        let post_hash = calculate_post_hash(post);
+        hasher.update(post_hash.as_bytes());
+    }
+
+    hasher.finalize().to_hex().to_string()
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Graphchan — redesign</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:ital,wght@0,400;0,600;0,800;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0b0d10; --panel:#11141a; --panel-2:#161a22; --line:#222834;
+    --ink:#e6e8ec; --ink-dim:#8a93a6; --ink-faint:#565e70;
+    --accent:#7cff5a; --accent-ink:#061507;
+    --danger:#ff5a7a; --warn:#ffd05a; --ok:#5affa3;
+    --mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,monospace;
+    --sans:"IBM Plex Sans","Space Grotesk",system-ui,sans-serif;
+    --serif:"Fraunces",serif;
+    --density:1;
+    --radius:6px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  #root{height:100%}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+  input,textarea{font:inherit;color:inherit}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .mono{font-family:var(--mono)}
+
+  /* New-post pulse: thread cards in catalog when fresh activity arrives */
+  @keyframes gc-pulse-card {
+    0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 70%, transparent), inset 0 0 0 0 transparent; border-color: var(--accent); }
+    40%  { box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 0%, transparent), inset 0 0 18px color-mix(in oklab, var(--accent) 22%, transparent); border-color: var(--accent); }
+    100% { box-shadow: 0 0 0 0 transparent, inset 0 0 0 0 transparent; border-color: var(--line); }
+  }
+  .gc-pulse {
+    animation: gc-pulse-card 1.6s ease-out infinite;
+  }
+  .gc-pulse-dot {
+    position: absolute; top: 8px; right: 8px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 var(--accent);
+    animation: gc-dot 1.4s ease-out infinite;
+  }
+  @keyframes gc-dot {
+    0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 70%, transparent); }
+    100% { box-shadow: 0 0 0 10px color-mix(in oklab, var(--accent) 0%, transparent); }
+  }
+
+  /* Unread post nodes — soft persistent glow that fades on click */
+  @keyframes gc-unread {
+    0%, 100% { filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent) 55%, transparent)); }
+    50%      { filter: drop-shadow(0 0 10px color-mix(in oklab, var(--accent) 80%, transparent)); }
+  }
+  .gc-unread { animation: gc-unread 2.2s ease-in-out infinite; }
+  .gc-unread-fade { animation: gc-unread 2.2s ease-in-out 1, gc-fade-out 1.2s ease-out forwards; }
+  @keyframes gc-fade-out {
+    to { filter: drop-shadow(0 0 0 transparent); }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="src/data.jsx"></script>
+<script type="text/babel" src="src/themes.jsx"></script>
+<script type="text/babel" src="src/layout.jsx"></script>
+<script type="text/babel" src="src/graphs.jsx"></script>
+<script type="text/babel" src="src/screens.jsx"></script>
+<script type="text/babel" src="src/app.jsx"></script>
+</body>
+</html>
