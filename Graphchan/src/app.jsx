@@ -10,7 +10,7 @@ const DEFAULTS = /*EDITMODE-BEGIN*/{
   "nodeStyle": "card"
 }/*EDITMODE-END*/;
 
-function Sidebar({ page, setPage, openThread, topicFilter, setTopicFilter, subscribed, toggleSub }) {
+function Sidebar({ page, setPage, openThread, topicFilter, setTopicFilter, subscribed }) {
   const nav = [
     { id:"catalog", label:"catalog", icon:"home" },
     { id:"dms", label:"messages", icon:"dm", badge:3 },
@@ -82,10 +82,10 @@ function Sidebar({ page, setPage, openThread, topicFilter, setTopicFilter, subsc
 
       <div style={{padding:"10px 16px",borderTop:"1px solid var(--line)",display:"flex",flexDirection:"column",gap:4}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <PeerGlyph peer={GC.peerBy.p_anon01} size={22}/>
+          <PeerGlyph peer={GC.peerBy[GC.SELF_ID]} size={22}/>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:12,fontWeight:600,color:GC.peerBy.p_anon01.color}}>anon <span style={{color:"var(--ink-faint)",fontWeight:400,fontFamily:"var(--mono)",fontSize:10}}>(you)</span></div>
-            <div className="mono" style={{fontSize:9,color:"var(--ink-faint)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>A7666CDA079E647F…</div>
+            <div style={{fontSize:12,fontWeight:600,color:GC.peerBy[GC.SELF_ID]?.color || "var(--accent)"}}>{GC.peerBy[GC.SELF_ID]?.alias || "local"} <span style={{color:"var(--ink-faint)",fontWeight:400,fontFamily:"var(--mono)",fontSize:10}}>(you)</span></div>
+            <div className="mono" style={{fontSize:9,color:"var(--ink-faint)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{GC.peerBy[GC.SELF_ID]?.fp || "starting…"}</div>
           </div>
         </div>
         <div className="mono" style={{fontSize:9,color:"var(--ink-faint)",display:"flex",justifyContent:"space-between"}}>
@@ -152,15 +152,7 @@ function NetRail() {
 
       <div className="mono" style={{fontSize:10,textTransform:"uppercase",letterSpacing:1,color:"var(--ink-faint)",marginBottom:6}}>recent gossip</div>
       <div style={{display:"flex",flexDirection:"column",gap:3,fontFamily:"var(--mono)",fontSize:10}}>
-        {[
-          ["↓", "ThreadAnnouncement", "th_rust", "lain"],
-          ["↑", "PostUpdate", "th_claude#p14", "you"],
-          ["↓", "FileAvailable", "cat.jpg · 2.4MB", "tomoko"],
-          ["↑", "ProfileUpdate", "avatar:v3", "you"],
-          ["↓", "ThreadAnnouncement", "th_x_meta", "ghost"],
-          ["≈", "neighbor up", "topic:claude", "+moloch"],
-          ["↓", "DirectMessage", "24b nonce", "nhi"],
-        ].map((row,i)=>(
+        {GC.THREADS.slice(0,7).map((t,i)=>(["↓", t.sync==="announced" ? "ThreadAnnouncement" : "ThreadCached", t.title, GC.peerBy[t.op]?.alias || "peer"])).map((row,i)=>(
           <div key={i} style={{display:"grid",gridTemplateColumns:"14px 92px 1fr",gap:6,padding:"3px 6px",color:"var(--ink-dim)"}}>
             <span style={{color: row[0]==="↓"?"var(--accent)":row[0]==="↑"?"var(--warn)":"var(--ok)"}}>{row[0]}</span>
             <span style={{color:"var(--ink)"}}>{row[1]}</span>
@@ -261,12 +253,33 @@ function App() {
   const [threadId, setThreadId] = US(null);
   const [tweaksOpen, setTweaksOpen] = US(false);
   const [topicFilter, setTopicFilter] = US(null);
-  const [subscribed, setSubscribed] = US(()=> new Set(GC.TOPICS.filter(t=>t.subscribed).map(t=>t.id)));
-  const toggleSub = (id) => setSubscribed(prev => {
-    const n = new Set(prev);
-    if (n.has(id)) n.delete(id); else n.add(id);
-    return n;
-  });
+  const [gc, setGc] = US(window.GC || EMPTY_GC);
+  const [loading, setLoading] = US(true);
+  const [error, setError] = US(null);
+
+  const refresh = async () => {
+    try {
+      setError(null);
+      const next = await GCAPI.load();
+      setGc(next);
+      return next;
+    } catch (err) {
+      const next = { ...(window.GC || EMPTY_GC), LOAD_ERROR: err.message };
+      window.GC = next;
+      setGc(next);
+      setError(err.message);
+      return next;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const subscribed = new Set(gc.TOPICS.filter(t=>t.subscribed).map(t=>t.id));
+  const toggleSub = async (id) => {
+    if (subscribed.has(id)) await GCAPI.unsubscribeTopic(id);
+    else await GCAPI.subscribeTopic(id);
+    await refresh();
+  };
 
   UE(()=>{
     applyTheme(tweaks.theme, tweaks.mode, tweaks.accent, tweaks.density);
@@ -274,6 +287,10 @@ function App() {
   }, [tweaks]);
 
   UE(()=>{ if (page !== "thread") localStorage.setItem("gc_page", page); },[page]);
+
+  UE(()=>{ refresh(); },[]);
+
+  UE(()=>{ window.GC = gc; },[gc]);
 
   // Tweaks host protocol
   UE(()=>{
@@ -289,16 +306,18 @@ function App() {
   const openThread = (id)=>{ setThreadId(id); setPage("thread"); };
 
   let content;
-  if (page==="catalog") content = <Catalog onOpen={openThread} topicFilter={topicFilter} setTopicFilter={setTopicFilter}/>;
-  else if (page==="thread") content = <ThreadView threadId={threadId} onBack={()=>setPage("catalog")} nodeStyle={tweaks.nodeStyle} density={tweaks.density}/>;
-  else if (page==="dms") content = <DMs/>;
-  else if (page==="friends") content = <Friends/>;
+  if (loading) content = <div style={{padding:40,fontFamily:"var(--mono)",color:"var(--ink-dim)"}}>connecting to graphchan backend…</div>;
+  else if (error) content = <div style={{padding:40,fontFamily:"var(--mono)",color:"var(--danger)"}}>backend unavailable: {error}<br/><button onClick={refresh} style={{...btn(),marginTop:12}}>retry</button></div>;
+  else if (page==="catalog") content = <Catalog onOpen={openThread} topicFilter={topicFilter} setTopicFilter={setTopicFilter} onRefresh={refresh}/>;
+  else if (page==="thread") content = <ThreadView threadId={threadId} onBack={()=>setPage("catalog")} nodeStyle={tweaks.nodeStyle} density={tweaks.density} onRefresh={refresh}/>;
+  else if (page==="dms") content = <DMs onRefresh={refresh}/>;
+  else if (page==="friends") content = <Friends onRefresh={refresh}/>;
   else if (page==="topics") content = <Topics subscribed={subscribed} toggleSub={toggleSub} onOpenTopic={(id)=>{ setTopicFilter(id); setPage("catalog"); }}/>;
   else if (page==="settings") content = <Settings/>;
 
   return (
     <div data-screen-label="Graphchan Client" style={{display:"flex",height:"100vh",width:"100vw",overflow:"hidden",background:"var(--bg)",color:"var(--ink)",fontFamily:"var(--font-body)"}}>
-      <Sidebar page={page==="thread"?"catalog":page} setPage={setPage} openThread={openThread} topicFilter={topicFilter} setTopicFilter={setTopicFilter} subscribed={subscribed} toggleSub={toggleSub}/>
+      <Sidebar page={page==="thread"?"catalog":page} setPage={setPage} openThread={openThread} topicFilter={topicFilter} setTopicFilter={setTopicFilter} subscribed={subscribed}/>
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,minHeight:0}}>{content}</div>
       {(page==="catalog"||page==="thread") && <NetRail/>}
       {!tweaksOpen && (

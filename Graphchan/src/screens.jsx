@@ -2,11 +2,13 @@
 
 const { useState: uS, useEffect: uE, useRef: uR, useMemo: uM } = React;
 
-function Catalog({ onOpen }) {
+function Catalog({ onOpen, topicFilter, setTopicFilter, onRefresh }) {
   const [q, setQ] = uS("");
   const [filter, setFilter] = uS("all");
+  const [creating, setCreating] = uS(false);
   const threads = GC.THREADS.filter(t=>{
     if (q && !t.title.toLowerCase().includes(q.toLowerCase())) return false;
+    if (topicFilter && !t.topics.includes(topicFilter)) return false;
     if (filter==="local" && t.sync!=="downloaded") return false;
     if (filter==="announced" && t.sync!=="announced") return false;
     return true;
@@ -17,7 +19,8 @@ function Catalog({ onOpen }) {
         <div>
           <div style={{fontFamily:"var(--font-head)",fontSize:28,fontWeight:700,letterSpacing:-0.5}}>catalog</div>
           <div className="mono" style={{color:"var(--ink-dim)",fontSize:12,marginTop:2}}>
-            {threads.length} threads · {threads.filter(t=>t.sync==="announced").length} announced · mesh OK
+            {threads.length} threads · {threads.filter(t=>t.sync==="announced").length} announced · {GC.HEALTH ? "mesh OK" : "offline"}
+            {topicFilter && <button onClick={()=>setTopicFilter(null)} style={{marginLeft:8,color:"var(--accent)"}}>clear #{topicFilter}</button>}
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -30,7 +33,7 @@ function Catalog({ onOpen }) {
               background: filter===f?"var(--accent)":"var(--panel)", color: filter===f?"var(--accent-ink)":"var(--ink-dim)",
               border:"1px solid var(--line)", borderRadius:"var(--radius)"}}>{f}</button>
           ))}
-          <button style={{padding:"6px 12px",fontFamily:"var(--mono)",fontSize:11,textTransform:"uppercase",letterSpacing:.8,
+          <button onClick={()=>setCreating(true)} style={{padding:"6px 12px",fontFamily:"var(--mono)",fontSize:11,textTransform:"uppercase",letterSpacing:.8,
             background:"var(--accent)",color:"var(--accent-ink)",border:"1px solid var(--accent)",borderRadius:"var(--radius)",display:"flex",alignItems:"center",gap:6,fontWeight:600}}>
             <Icon name="plus" size={12}/> new thread
           </button>
@@ -72,20 +75,77 @@ function Catalog({ onOpen }) {
           );
         })}
       </div>
+      {creating && <NewThreadModal onClose={()=>setCreating(false)} onCreated={async (id)=>{ setCreating(false); await onRefresh?.(); if (id) onOpen(id); }}/>}
     </div>
   );
 }
 
-function ThreadView({ threadId, onBack, nodeStyle, density }) {
-  const t = GC.THREAD_BY_ID[threadId] || GC.THREAD_BY_ID.th_claude;
-  if (!t) return <div style={{padding:40,color:"var(--ink-faint)",fontFamily:"var(--mono)"}}>thread not found — <button onClick={onBack} style={{color:"var(--accent)",textDecoration:"underline"}}>back to catalog</button></div>;
+function NewThreadModal({ onClose, onCreated }) {
+  const [title, setTitle] = uS("");
+  const [body, setBody] = uS("");
+  const [topics, setTopics] = uS("");
+  const [files, setFiles] = uS([]);
+  const [busy, setBusy] = uS(false);
+  const [error, setError] = uS(null);
+  const inputRef = uR(null);
+  const addFiles = (list) => setFiles(prev => [...prev, ...Array.from(list || []).map(file => ({ id: "f_" + Math.random().toString(36).slice(2), raw:file, name:file.name, size:file.size }))]);
+  const submit = async () => {
+    if (!title.trim() || !body.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const created = await GCAPI.createThread({
+        title: title.trim(),
+        body: body.trim(),
+        topics: topics.split(/[,\s]+/).map(t=>t.replace(/^#/,"").trim()).filter(Boolean),
+        files,
+      });
+      await onCreated?.(created?.thread?.id || created?.id);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"min(640px, 100%)",background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,.6)"}}>
+        <div style={{padding:"12px 16px",borderBottom:"1px solid var(--line)",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--panel2)"}}>
+          <span className="mono" style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:"var(--ink-dim)"}}>new thread</span>
+          <button onClick={onClose} style={{color:"var(--ink-faint)"}}><Icon name="x" size={14}/></button>
+        </div>
+        <div style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
+          <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus placeholder="thread title" style={{background:"var(--bg)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"9px 12px",outline:"none",fontSize:14}}/>
+          <textarea value={body} onChange={e=>setBody(e.target.value)} placeholder="opening post…" style={{minHeight:140,background:"var(--bg)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"10px 12px",outline:"none",resize:"vertical",fontSize:13,lineHeight:1.5}}/>
+          <input value={topics} onChange={e=>setTopics(e.target.value)} placeholder="topics, comma or space separated" className="mono" style={{background:"var(--bg)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"8px 12px",outline:"none",fontSize:12}}/>
+          <input ref={inputRef} type="file" multiple accept="image/*,video/*" onChange={e=>{ addFiles(e.target.files); e.target.value=""; }} style={{display:"none"}}/>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>inputRef.current?.click()} style={{...btn(),display:"inline-flex",alignItems:"center",gap:6,padding:"6px 10px"}}><Icon name="img" size={12}/> add files</button>
+            <span className="mono" style={{fontSize:10,color:"var(--ink-faint)"}}>{files.length} attached</span>
+          </div>
+          {error && <div className="mono" style={{fontSize:11,color:"var(--danger)"}}>{error}</div>}
+        </div>
+        <div style={{padding:"10px 14px",borderTop:"1px solid var(--line)",background:"var(--panel2)",display:"flex",justifyContent:"flex-end",gap:6}}>
+          <button onClick={onClose} style={btn()}>cancel</button>
+          <button disabled={busy || !title.trim() || !body.trim()} onClick={submit} style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700,cursor:busy?"wait":"pointer"}}>{busy ? "posting…" : "post ↗"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThreadView({ threadId, onBack, nodeStyle, density, onRefresh }) {
+  const t = GC.THREAD_BY_ID[threadId];
   const [mode, setMode] = uS("graph");
   const [bins, setBins] = uS(8);
   const [composing, setComposing] = uS(null); // { replyTo: postId|null, kind: "reply"|"fork"|"quote"|"new" }
-  const [selected, setSelected] = uS(t.posts[0]?.id);
+  const [selected, setSelected] = uS(t?.posts?.[0]?.id);
   const initialUnread = GC.UNREAD_POSTS[threadId] || new Set();
   const [unread, setUnread] = uS(()=> new Set(initialUnread));
   const [fading, setFading] = uS(()=> new Set()); // ids currently in fade-out
+  const [busy, setBusy] = uS(false);
+  const [error, setError] = uS(null);
+  uE(()=>{ if (t?.posts?.length && !t.posts.some(p=>p.id===selected)) setSelected(t.posts[0].id); },[threadId, t?.posts?.length, selected]);
+  if (!t) return <div style={{padding:40,color:"var(--ink-faint)",fontFamily:"var(--mono)"}}>thread not found — <button onClick={onBack} style={{color:"var(--accent)",textDecoration:"underline"}}>back to catalog</button></div>;
   const selectedPost = t.posts.find(p=>p.id===selected);
   const peer = selectedPost && GC.peerBy[selectedPost.author];
 
@@ -110,6 +170,17 @@ function ThreadView({ threadId, onBack, nodeStyle, density }) {
   ];
 
   const needsDownload = t.sync === "announced";
+  const download = async () => {
+    setBusy(true); setError(null);
+    try {
+      await GCAPI.downloadThread(t.id);
+      await onRefresh?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
@@ -124,6 +195,7 @@ function ThreadView({ threadId, onBack, nodeStyle, density }) {
               {t.topics.map(tp=>(<span key={tp} className="mono" style={{fontSize:11,color:"var(--accent)"}}>#{tp}</span>))}
               <span className="mono" style={{fontSize:11,color:"var(--ink-faint)"}}>· {t.posts.length} posts · {t.peers} peers</span>
               <SyncBadge status={t.sync}/>
+              {error && <span className="mono" style={{fontSize:11,color:"var(--danger)"}}>· {error}</span>}
               {t.visibility==="private" && <span className="mono" style={{fontSize:10,color:"var(--accent)",display:"inline-flex",alignItems:"center",gap:4,border:"1px solid var(--accent)",padding:"1px 6px",borderRadius:"var(--radius)"}}><Icon name="lock" size={10}/>private</span>}
             </div>
           </div>
@@ -144,7 +216,7 @@ function ThreadView({ threadId, onBack, nodeStyle, density }) {
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12,padding:40,textAlign:"center"}}>
           <div style={{fontFamily:"var(--mono)",fontSize:13,color:"var(--warn)",letterSpacing:1}}>◈ ANNOUNCED — NOT DOWNLOADED</div>
           <div style={{fontSize:13,color:"var(--ink-dim)",maxWidth:420}}>This thread was gossiped to you via topic subscription. The blob ticket is stored; fetching will contact the peer directly via iroh.</div>
-          <button style={{padding:"10px 18px",fontFamily:"var(--mono)",fontSize:12,textTransform:"uppercase",letterSpacing:1,background:"var(--accent)",color:"var(--accent-ink)",borderRadius:"var(--radius)",fontWeight:700}}>⇣ redeem ticket</button>
+          <button disabled={busy} onClick={download} style={{padding:"10px 18px",fontFamily:"var(--mono)",fontSize:12,textTransform:"uppercase",letterSpacing:1,background:"var(--accent)",color:"var(--accent-ink)",borderRadius:"var(--radius)",fontWeight:700,cursor:busy?"wait":"pointer"}}>{busy ? "fetching…" : "⇣ redeem ticket"}</button>
         </div>
       ) : (
         <div style={{flex:1,display:"flex",minHeight:0}}>
@@ -197,7 +269,7 @@ function ThreadView({ threadId, onBack, nodeStyle, density }) {
                   <button style={btn()} onClick={()=>setComposing({replyTo:selected, kind:"reply"})}>⏎ reply</button>
                   <button style={btn()} onClick={()=>setComposing({replyTo:selected, kind:"fork"})}>⑂ fork</button>
                   <button style={btn()} onClick={()=>setComposing({replyTo:selected, kind:"quote"})}>◈ quote</button>
-                  <button style={{...btn(), color:"var(--danger)"}}>⊘ block author</button>
+                  <button style={{...btn(), color:"var(--danger)"}} onClick={async()=>{ if (selectedPost.author) { await GCAPI.blockPeer(selectedPost.author); await onRefresh?.(); }}}>⊘ block author</button>
                 </div>
               </>
             ) : (
@@ -207,14 +279,14 @@ function ThreadView({ threadId, onBack, nodeStyle, density }) {
           )}
         </div>
       )}
-      {composing && <Composer thread={t} ctx={composing} onClose={()=>setComposing(null)}/>}
+      {composing && <Composer thread={t} ctx={composing} onClose={()=>setComposing(null)} onPosted={async()=>{ setComposing(null); await onRefresh?.(); }}/>}
     </div>
   );
 }
 
 function btn(){ return {padding:"4px 10px",fontFamily:"var(--mono)",fontSize:11,background:"var(--panel2)",color:"var(--ink-dim)",border:"1px solid var(--line)",borderRadius:"var(--radius)"}; }
 
-function Composer({ thread, ctx, onClose }) {
+function Composer({ thread, ctx, onClose, onPosted }) {
   const [body, setBody] = uS(ctx.kind === "quote" && ctx.replyTo
     ? ">>"+ctx.replyTo+"\n"+(thread.posts.find(p=>p.id===ctx.replyTo)?.body.split("\n").map(l=>">"+l).join("\n") || "")+"\n\n"
     : "");
@@ -230,7 +302,7 @@ function Composer({ thread, ctx, onClose }) {
       const id = "f_" + Math.random().toString(36).slice(2,9);
       const isImg = f.type.startsWith("image/");
       const url = isImg ? URL.createObjectURL(f) : null;
-      next.push({ id, name:f.name, type:f.type, size:f.size, url, isImg });
+      next.push({ id, raw:f, name:f.name, type:f.type, size:f.size, url, isImg });
     }
     setFiles(prev => [...prev, ...next]);
   };
@@ -241,6 +313,21 @@ function Composer({ thread, ctx, onClose }) {
     if (its.length) addFiles(its.map(i=>i.getAsFile()).filter(Boolean));
   };
   const remove = (id) => setFiles(prev => prev.filter(f=>f.id!==id));
+  const [busy, setBusy] = uS(false);
+  const [error, setError] = uS(null);
+  const submit = async () => {
+    if (!body.trim() || overCap || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const parentPostIds = ctx.replyTo ? [ctx.replyTo] : [];
+      await GCAPI.createPost(thread.id, { body: body.trim(), parentPostIds, files });
+      await onPosted?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const titles = { reply:"reply", fork:"fork from", quote:"quote", new:"new post" };
   const totalBytes = files.reduce((s,f)=>s+f.size, 0);
@@ -300,17 +387,18 @@ function Composer({ thread, ctx, onClose }) {
               {files.length} file{files.length===1?"":"s"} · {(totalBytes/1024/1024).toFixed(2)} / 50.00 MB
             </span>
             {overCap && <span className="mono" style={{fontSize:10,color:"var(--danger)"}}>OVER CAP</span>}
+            {error && <span className="mono" style={{fontSize:10,color:"var(--danger)"}}>{error}</span>}
           </div>
         </div>
         <div style={{padding:"10px 14px",borderTop:"1px solid var(--line)",background:"var(--panel2)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
           <div className="mono" style={{fontSize:10,color:"var(--ink-faint)"}}>⚿ signed locally · gossiped to {thread.peers || 0} peers · files chunked via blake3</div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={onClose} style={btn()}>cancel</button>
-            <button disabled={!body.trim() || overCap} onClick={onClose}
+            <button disabled={!body.trim() || overCap || busy} onClick={submit}
               style={{padding:"6px 14px",fontFamily:"var(--mono)",fontSize:11,textTransform:"uppercase",letterSpacing:.8,
-                background:(!body.trim()||overCap)?"var(--panel)":"var(--accent)",color:(!body.trim()||overCap)?"var(--ink-faint)":"var(--accent-ink)",
-                border:"1px solid var(--line)",borderRadius:"var(--radius)",fontWeight:700,cursor:(!body.trim()||overCap)?"not-allowed":"pointer"}}>
-              post ↗
+                background:(!body.trim()||overCap||busy)?"var(--panel)":"var(--accent)",color:(!body.trim()||overCap||busy)?"var(--ink-faint)":"var(--accent-ink)",
+                border:"1px solid var(--line)",borderRadius:"var(--radius)",fontWeight:700,cursor:(!body.trim()||overCap||busy)?"not-allowed":"pointer"}}>
+              {busy ? "posting…" : "post ↗"}
             </button>
           </div>
         </div>
@@ -319,9 +407,26 @@ function Composer({ thread, ctx, onClose }) {
   );
 }
 
-function DMs() {
-  const [active, setActive] = uS(GC.DMS[0].peer);
+function DMs({ onRefresh }) {
+  const [active, setActive] = uS(GC.DMS[0]?.peer || null);
+  const [body, setBody] = uS("");
+  const [busy, setBusy] = uS(false);
+  const [error, setError] = uS(null);
+  uE(()=>{ if (!active && GC.DMS[0]?.peer) setActive(GC.DMS[0].peer); },[GC.DMS.length]);
   const conv = GC.DMS.find(c=>c.peer===active);
+  const send = async () => {
+    if (!active || !body.trim() || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await GCAPI.sendDm(active, body.trim());
+      setBody("");
+      await onRefresh?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div style={{display:"flex",height:"100%",minHeight:0}}>
       <div style={{width:280,borderRight:"1px solid var(--line)",background:"var(--panel)",overflow:"auto"}}>
@@ -329,6 +434,7 @@ function DMs() {
           <div style={{fontFamily:"var(--font-head)",fontSize:18,fontWeight:700}}>messages</div>
           <div className="mono" style={{fontSize:10,color:"var(--ink-faint)"}}>X25519 · crypto_box · per-peer gossip topic</div>
         </div>
+        {GC.DMS.length === 0 && <div className="mono" style={{padding:16,fontSize:11,color:"var(--ink-faint)"}}>no conversations yet</div>}
         {GC.DMS.map(c=>{
           const p = GC.peerBy[c.peer];
           return (
@@ -345,13 +451,15 @@ function DMs() {
         })}
       </div>
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
+        {active ? (
+        <>
         <div style={{padding:"12px 18px",borderBottom:"1px solid var(--line)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <PeerChip peer={GC.peerBy[active]} showFp/>
           <span className="mono" style={{fontSize:10,color:"var(--ok)",display:"inline-flex",alignItems:"center",gap:6}}><Icon name="lock" size={10}/> end-to-end · shared secret established</span>
         </div>
         <div style={{flex:1,padding:24,overflow:"auto",display:"flex",flexDirection:"column",gap:10}}>
-          {conv.messages.map((m,i)=>{
-            const mine = m.from === "p_anon01";
+          {(conv?.messages || []).map((m,i)=>{
+            const mine = m.from === GC.SELF_ID;
             const p = GC.peerBy[m.from];
             return (
               <div key={i} style={{display:"flex",justifyContent:mine?"flex-end":"flex-start"}}>
@@ -367,16 +475,37 @@ function DMs() {
           })}
         </div>
         <div style={{padding:14,borderTop:"1px solid var(--line)",display:"flex",gap:8}}>
-          <input placeholder="type… (encrypted before leaving this box)" style={{flex:1,background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"8px 12px",outline:"none",fontSize:13}}/>
-          <button style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",padding:"8px 14px",fontWeight:700}}>send ↗</button>
+          <input value={body} onChange={e=>setBody(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter") send(); }} placeholder="type… (encrypted before leaving this box)" style={{flex:1,background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"8px 12px",outline:"none",fontSize:13}}/>
+          {error && <span className="mono" style={{alignSelf:"center",fontSize:10,color:"var(--danger)"}}>{error}</span>}
+          <button disabled={busy || !body.trim()} onClick={send} style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",padding:"8px 14px",fontWeight:700,cursor:busy?"wait":"pointer"}}>{busy ? "sending…" : "send ↗"}</button>
         </div>
+        </>
+        ) : (
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--mono)",color:"var(--ink-faint)"}}>select a conversation</div>
+        )}
       </div>
     </div>
   );
 }
 
-function Friends() {
+function Friends({ onRefresh }) {
   const friends = GC.PEERS.filter(p=>p.role==="friend"||p.role==="agent");
+  const [friendcodeOpen, setFriendcodeOpen] = uS(false);
+  const [adding, setAdding] = uS(false);
+  const [friendcode, setFriendcode] = uS("");
+  const [error, setError] = uS(null);
+  const add = async () => {
+    if (!friendcode.trim()) return;
+    setError(null);
+    try {
+      await GCAPI.addPeer(friendcode.trim());
+      setFriendcode("");
+      setAdding(false);
+      await onRefresh?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
   return (
     <div style={{padding:"calc(16px * var(--density))",overflow:"auto"}}>
       <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:16}}>
@@ -385,8 +514,8 @@ function Friends() {
           <div className="mono" style={{color:"var(--ink-dim)",fontSize:12}}>{friends.filter(f=>f.online).length}/{friends.length} online · direct holepunch where possible</div>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button style={{...btn(),padding:"8px 14px"}}>⎘ show my friendcode</button>
-          <button style={{...btn(),padding:"8px 14px",background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700}}>+ add friend</button>
+          <button onClick={()=>setFriendcodeOpen(true)} style={{...btn(),padding:"8px 14px"}}>⎘ show my friendcode</button>
+          <button onClick={()=>setAdding(true)} style={{...btn(),padding:"8px 14px",background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700}}>+ add friend</button>
         </div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))",gap:12}}>
@@ -408,16 +537,51 @@ function Friends() {
             <div style={{display:"flex",gap:4,marginTop:10}}>
               <button style={btn()}>dm</button>
               <button style={btn()}>view catalog</button>
-              <button style={{...btn(),color:"var(--danger)"}}>block</button>
+              <button onClick={async()=>{ await GCAPI.blockPeer(p.id); await onRefresh?.(); }} style={{...btn(),color:"var(--danger)"}}>block</button>
             </div>
           </div>
         ))}
       </div>
+      {friendcodeOpen && (
+        <div onClick={()=>setFriendcodeOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"min(620px,100%)",background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div className="mono" style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:"var(--ink-dim)"}}>your friendcode</div>
+              <button onClick={()=>setFriendcodeOpen(false)}><Icon name="x" size={14}/></button>
+            </div>
+            <textarea readOnly value={GC.peerBy[GC.SELF_ID]?.friendcode || GC.peerBy[GC.SELF_ID]?.shortFriendcode || ""} style={{width:"100%",minHeight:120,background:"var(--bg)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:10,color:"var(--ink)",fontFamily:"var(--mono)",fontSize:11}}/>
+            <button onClick={()=>navigator.clipboard?.writeText(GC.peerBy[GC.SELF_ID]?.friendcode || GC.peerBy[GC.SELF_ID]?.shortFriendcode || "")} style={{...btn(),marginTop:10}}>copy</button>
+          </div>
+        </div>
+      )}
+      {adding && (
+        <div onClick={()=>setAdding(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"min(620px,100%)",background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div className="mono" style={{fontSize:11,textTransform:"uppercase",letterSpacing:1,color:"var(--ink-dim)"}}>add friend</div>
+              <button onClick={()=>setAdding(false)}><Icon name="x" size={14}/></button>
+            </div>
+            <textarea value={friendcode} onChange={e=>setFriendcode(e.target.value)} autoFocus placeholder="paste graphchan friendcode…" style={{width:"100%",minHeight:120,background:"var(--bg)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:10,color:"var(--ink)",fontFamily:"var(--mono)",fontSize:11}}/>
+            {error && <div className="mono" style={{fontSize:11,color:"var(--danger)",marginTop:8}}>{error}</div>}
+            <div style={{display:"flex",justifyContent:"flex-end",gap:6,marginTop:10}}>
+              <button onClick={()=>setAdding(false)} style={btn()}>cancel</button>
+              <button onClick={add} style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700}}>add</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Topics() {
+function Topics({ subscribed, toggleSub, onOpenTopic }) {
+  const [topic, setTopic] = uS("");
+  const add = async () => {
+    const id = topic.replace(/^#/,"").trim();
+    if (!id) return;
+    await toggleSub(id);
+    setTopic("");
+  };
   return (
     <div style={{padding:"calc(16px * var(--density))",overflow:"auto"}}>
       <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:16}}>
@@ -427,7 +591,8 @@ function Topics() {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:"6px 10px"}}>
           <Icon name="plus" size={12}/>
-          <input placeholder="subscribe to topic…" style={{background:"transparent",border:0,outline:"none",fontSize:12,fontFamily:"var(--mono)",width:220}}/>
+          <input value={topic} onChange={e=>setTopic(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter") add(); }} placeholder="subscribe to topic…" style={{background:"transparent",border:0,outline:"none",fontSize:12,fontFamily:"var(--mono)",width:220}}/>
+          <button onClick={add} style={{color:"var(--accent)",fontFamily:"var(--mono)",fontSize:11}}>add</button>
         </div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(240px, 1fr))",gap:10}}>
@@ -441,8 +606,8 @@ function Topics() {
             <div className="mono" style={{fontSize:11,color:"var(--ink-dim)",marginTop:4}}>{t.peers} peers in mesh</div>
             {t.unread>0 && <div style={{marginTop:6,fontFamily:"var(--mono)",fontSize:10,color:"var(--accent)"}}>● {t.unread} new threads</div>}
             <div style={{marginTop:10,display:"flex",gap:4}}>
-              {t.subscribed ? <button style={{...btn(),color:"var(--ok)"}}>✓ subscribed</button> : <button style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700}}>subscribe</button>}
-              <button style={btn()}>browse</button>
+              {subscribed.has(t.id) ? <button onClick={()=>toggleSub(t.id)} style={{...btn(),color:"var(--ok)"}}>✓ subscribed</button> : <button onClick={()=>toggleSub(t.id)} style={{...btn(),background:"var(--accent)",color:"var(--accent-ink)",fontWeight:700}}>subscribe</button>}
+              <button onClick={()=>onOpenTopic(t.id)} style={btn()}>browse</button>
             </div>
           </div>
         ))}
@@ -452,17 +617,19 @@ function Topics() {
 }
 
 function Settings() {
+  const self = GC.peerBy[GC.SELF_ID];
+  const api = GC.API_BASE || "unknown";
   return (
     <div style={{padding:"calc(16px * var(--density))",overflow:"auto",maxWidth:800}}>
       <div style={{fontFamily:"var(--font-head)",fontSize:28,fontWeight:700,marginBottom:16}}>settings</div>
       {[
-        ["identity","GPG: A7666CDA079E647F · iroh: dbc8468d56…b39b4 · X25519: 7f3a…4c91","regenerate keys → wipes everything, you've been warned"],
-        ["storage","~/.graphchan/ · 4.2 GB on disk · 128 threads cached","configure cap / prune policy"],
-        ["relay","n0.computer default + custom: 96.230.21.18:49587","add/remove relay hints"],
-        ["upload cap","GRAPHCHAN_MAX_UPLOAD_BYTES = 50 MB","soft cap, rejected at ingest"],
-        ["blocklists","3 subscribed · 41 peers blocked","manage →"],
-        ["agents","1 connected: clawdbot","bring your own LLM endpoint"],
-        ["api","http://127.0.0.1:8080 (bound) · port fallback on conflict","expose to LAN (careful)"],
+        ["identity",`GPG: ${self?.fp || "unknown"} · iroh: ${GC.HEALTH?.identity?.iroh_peer_id || "unknown"}`,"local identity loaded from backend"],
+        ["storage",`${GC.THREADS.length} threads cached · ${GC.TOTAL_FILES || 0} file references`,"portable data lives beside the executable"],
+        ["relay",(GC.HEALTH?.network?.addresses || []).join(" · ") || "no advertised addresses yet","network addresses reported by backend"],
+        ["upload cap","50 MB UI soft cap","larger backend limit is controlled by GRAPHCHAN_MAX_UPLOAD_BYTES"],
+        ["blocklists","available through REST API","peer and IP blocking endpoints are wired"],
+        ["agents",`${GC.PEERS.filter(p=>p.role==="agent").length} agent identities known`,"bring your own LLM endpoint"],
+        ["api",api,"Tauri mode starts this backend automatically"],
       ].map(([k,v,hint])=>(
         <div key={k} style={{padding:"14px 0",borderBottom:"1px solid var(--line)",display:"grid",gridTemplateColumns:"140px 1fr auto",gap:16,alignItems:"center"}}>
           <div className="mono" style={{fontSize:12,textTransform:"uppercase",color:"var(--ink-dim)",letterSpacing:.8}}>{k}</div>
@@ -470,7 +637,7 @@ function Settings() {
             <div style={{fontSize:13,fontFamily:"var(--mono)"}}>{v}</div>
             <div style={{fontSize:11,color:"var(--ink-faint)",marginTop:2}}>{hint}</div>
           </div>
-          <button style={btn()}>edit</button>
+          <button disabled style={{...btn(),opacity:.55,cursor:"default"}}>view</button>
         </div>
       ))}
     </div>

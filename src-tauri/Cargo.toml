@@ -1,0 +1,19 @@
+[package]
+name = "graphchan_desktop"
+version = "0.1.0"
+description = "Graphchan desktop client"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.6.0", features = [] }
+
+[dependencies]
+anyhow = "1"
+graphchan_backend = { path = "../graphchan_backend" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2.11.0", features = [] }
+tracing = "0.1"
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
