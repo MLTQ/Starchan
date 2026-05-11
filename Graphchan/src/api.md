@@ -6,7 +6,7 @@ Connects the React UI to the Graphchan REST backend and translates backend DTOs 
 ## Components
 
 ### `loadGraphchanState`
-- **Does**: Detects the backend URL, fetches health, identity, peers, topics, threads, and DM summaries, then populates `window.GC`.
+- **Does**: Detects the backend URL, fetches health, identity, peers, topics, threads, DM summaries, and unread DM count, then populates `window.GC`.
 - **Interacts with**: Backend routes `/health`, `/peers/self`, `/peers`, `/topics`, `/threads`, `/dms/conversations`.
 - **Rationale**: Keeps the existing prototype components working while the app migrates from global mock data to explicit state.
 

@@ -6,7 +6,7 @@ Owns the top-level Graphchan client shell, theme state, navigation, and live bac
 ## Components
 
 ### `Sidebar`
-- **Does**: Renders primary navigation, subscribed topic shortcuts, and local identity summary.
+- **Does**: Renders primary navigation, live unread DM badge, subscribed topic shortcuts, and local identity summary.
 - **Interacts with**: `GC.TOPICS`, `GC.peerBy`, `GC.NETWORK_STATS`.
 
 ### `NetRail`

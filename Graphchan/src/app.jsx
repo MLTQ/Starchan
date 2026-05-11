@@ -13,7 +13,7 @@ const DEFAULTS = /*EDITMODE-BEGIN*/{
 function Sidebar({ page, setPage, openThread, topicFilter, setTopicFilter, subscribed }) {
   const nav = [
     { id:"catalog", label:"catalog", icon:"home" },
-    { id:"dms", label:"messages", icon:"dm", badge:3 },
+    { id:"dms", label:"messages", icon:"dm", badge:GC.NETWORK_STATS.messages_unread },
     { id:"friends", label:"friends", icon:"friend" },
     { id:"topics", label:"topics", icon:"topic" },
     { id:"settings", label:"settings", icon:"settings" },
@@ -34,7 +34,6 @@ function Sidebar({ page, setPage, openThread, topicFilter, setTopicFilter, subsc
           </div>
           <div>
             <div style={{fontFamily:"var(--font-head)",fontSize:16,fontWeight:700,letterSpacing:-0.3}}>graphchan</div>
-            <div className="mono" style={{fontSize:9,color:"var(--ink-faint)",letterSpacing:.8}}>p2p · DAG · wild west</div>
           </div>
         </div>
       </div>
