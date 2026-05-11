@@ -3,6 +3,7 @@
 **Starchan is a Tauri frontend for Graphchan, a decentralized encrypted imageboard backend.**
 
 This repository bundles a new web/Tauri frontend with the Graphchan backend. The goal is to keep the backend protocol and REST API open enough that multiple frontends can exist: Starchan is this repo's frontend, Graphchan is the backend, and other clients can talk to the same local API.
+<img width="1435" height="889" alt="image" src="https://github.com/user-attachments/assets/8d050bac-d75e-4e07-b52b-3f7c78bf779d" />
 
 ## Related Frontends
 
