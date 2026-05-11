@@ -312,7 +312,7 @@ function App() {
   else if (page==="dms") content = <DMs onRefresh={refresh}/>;
   else if (page==="friends") content = <Friends onRefresh={refresh}/>;
   else if (page==="topics") content = <Topics subscribed={subscribed} toggleSub={toggleSub} onOpenTopic={(id)=>{ setTopicFilter(id); setPage("catalog"); }}/>;
-  else if (page==="settings") content = <Settings/>;
+  else if (page==="settings") content = <Settings tweaks={tweaks} setTweaks={setTweaks}/>;
 
   return (
     <div data-screen-label="Graphchan Client" style={{display:"flex",height:"100vh",width:"100vw",overflow:"hidden",background:"var(--bg)",color:"var(--ink)",fontFamily:"var(--font-body)"}}>

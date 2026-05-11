@@ -19,7 +19,7 @@ Owns the top-level Graphchan client shell, theme state, navigation, and live bac
 
 ### `App`
 - **Does**: Loads live Graphchan state, handles refreshes after mutations, and routes between catalog, thread, DM, friends, topics, and settings screens.
-- **Interacts with**: `GCAPI` in `api.jsx`, screen components in `screens.jsx`.
+- **Interacts with**: `GCAPI` in `api.jsx`, screen components in `screens.jsx`, theme settings in `themes.jsx`.
 
 ## Contracts
 
@@ -27,4 +27,5 @@ Owns the top-level Graphchan client shell, theme state, navigation, and live bac
 |-----------|---------|------------------|
 | `main.jsx` | Rendering `App` starts the UI | Removing root render |
 | `screens.jsx` | Receives `onRefresh` for backend mutations | Dropping refresh prop |
+| `screens.jsx` | Receives `tweaks`/`setTweaks` for settings appearance controls | Renaming theme state fields |
 | `api.jsx` | `GCAPI.load()` returns state compatible with `window.GC` | Renaming state fields |

@@ -616,12 +616,50 @@ function Topics({ subscribed, toggleSub, onOpenTopic }) {
   );
 }
 
-function Settings() {
+function Settings({ tweaks, setTweaks }) {
   const self = GC.peerBy[GC.SELF_ID];
   const api = GC.API_BASE || "unknown";
+  const setAppearance = (patch) => setTweaks({ ...tweaks, ...patch });
+  const setTheme = (theme) => {
+    setAppearance({ theme, accent: Object.values(ACCENTS[theme])[0] });
+  };
   return (
     <div style={{padding:"calc(16px * var(--density))",overflow:"auto",maxWidth:800}}>
       <div style={{fontFamily:"var(--font-head)",fontSize:28,fontWeight:700,marginBottom:16}}>settings</div>
+
+      <div style={{padding:"14px 0",borderBottom:"1px solid var(--line)",display:"grid",gridTemplateColumns:"140px 1fr",gap:16,alignItems:"start"}}>
+        <div className="mono" style={{fontSize:12,textTransform:"uppercase",color:"var(--ink-dim)",letterSpacing:.8}}>appearance</div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))",gap:6}}>
+            {Object.entries(THEMES).map(([key, theme])=>(
+              <button key={key} onClick={()=>setTheme(key)}
+                style={{padding:"9px 10px",textAlign:"left",background:tweaks.theme===key?"var(--accent)":"var(--panel)",color:tweaks.theme===key?"var(--accent-ink)":"var(--ink-dim)",border:"1px solid var(--line)",borderRadius:"var(--radius)"}}>
+                <div className="mono" style={{fontSize:11,textTransform:"uppercase",fontWeight:700}}>{theme.label}</div>
+                <div style={{fontSize:10,marginTop:3,opacity:.78,lineHeight:1.25}}>{theme.desc}</div>
+              </button>
+            ))}
+          </div>
+
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:4,background:"var(--panel)",border:"1px solid var(--line)",borderRadius:"var(--radius)",padding:3}}>
+              {["dark","light"].map(mode=>(
+                <button key={mode} onClick={()=>setAppearance({ mode })}
+                  style={{padding:"5px 10px",fontFamily:"var(--mono)",fontSize:11,textTransform:"uppercase",background:tweaks.mode===mode?"var(--accent)":"transparent",color:tweaks.mode===mode?"var(--accent-ink)":"var(--ink-dim)",borderRadius:"calc(var(--radius) - 1px)"}}>
+                  {mode}
+                </button>
+              ))}
+            </div>
+
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              {Object.entries(ACCENTS[tweaks.theme]).map(([name, hex])=>(
+                <button key={hex} onClick={()=>setAppearance({ accent: hex })} title={name}
+                  style={{width:28,height:28,borderRadius:"var(--radius)",background:hex,border:tweaks.accent===hex?"2px solid var(--ink)":"1px solid var(--line)",cursor:"pointer"}}/>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {[
         ["identity",`GPG: ${self?.fp || "unknown"} · iroh: ${GC.HEALTH?.identity?.iroh_peer_id || "unknown"}`,"local identity loaded from backend"],
         ["storage",`${GC.THREADS.length} threads cached · ${GC.TOTAL_FILES || 0} file references`,"portable data lives beside the executable"],

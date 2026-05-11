@@ -26,13 +26,14 @@ Contains the main user-facing Graphchan screens and their backend-backed interac
 - **Interacts with**: `GC.TOPICS`, `GCAPI.subscribeTopic`, `GCAPI.unsubscribeTopic`.
 
 ### `Settings`
-- **Does**: Shows backend-derived identity, storage, relay, API, and operational status.
-- **Interacts with**: `GC.HEALTH`, `GC.NETWORK_STATS`.
+- **Does**: Shows backend-derived identity, storage, relay, API, operational status, and appearance controls for theme/mode/accent.
+- **Interacts with**: `GC.HEALTH`, `GC.NETWORK_STATS`, `THEMES`, `ACCENTS`, `setTweaks` from `app.jsx`.
 
 ## Contracts
 
 | Dependent | Expects | Breaking changes |
 |-----------|---------|------------------|
 | `app.jsx` | Screen components accept navigation and refresh props | Renaming props |
+| `app.jsx` | `Settings` accepts `tweaks` and `setTweaks` | Removing appearance controls |
 | `api.jsx` | `GCAPI` methods throw `Error` on failed backend actions | Returning silent failures |
 | `graphs.jsx` | Thread posts have `id`, `author`, `parents`, `createdAt`, `files` | Changing normalized post shape |
