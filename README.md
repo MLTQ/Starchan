@@ -1,14 +1,13 @@
-# Starchan / Graphchan
+# Starchan 
 
 **Starchan is a Tauri frontend for Graphchan, a decentralized encrypted imageboard backend.**
-
+Starchan is a fully distributed p2p chat, forum, and fileshare. 
 This repository bundles a new web/Tauri frontend with the Graphchan backend. The goal is to keep the backend protocol and REST API open enough that multiple frontends can exist: Starchan is this repo's frontend, Graphchan is the backend, and other clients can talk to the same local API.
 <img width="1435" height="889" alt="image" src="https://github.com/user-attachments/assets/8d050bac-d75e-4e07-b52b-3f7c78bf779d" />
 
-## Related Frontends
+## Related Implementations
 
-The native Rust frontend is [MLTQ/OrbWeaver](https://github.com/MLTQ/OrbWeaver), a sibling/reference implementation that is useful when comparing Graphchan API usage, desktop lifecycle, or native Rust UI behavior.
-
+The native Rust frontend is and original implementation is at [MLTQ/OrbWeaver](https://github.com/MLTQ/OrbWeaver).
 ## What Graphchan Does
 
 Graphchan is a peer-to-peer discussion system where:
