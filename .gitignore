@@ -1,10 +1,12 @@
 
 .DS_Store
-
+.yarn
 Graphchan.zip
 node_modules/
 Graphchan/dist/
 src-tauri/target/
 src-tauri/gen/
 target/
-
+.pnp.cjs
+.pnp.loader.mjs
+.yarn/*
