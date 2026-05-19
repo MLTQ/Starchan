@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Graphchan",
+  "productName": "Starchan",
   "version": "0.1.0",
   "identifier": "com.graphchan.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Graphchan",
+        "title": "Starchan",
         "width": 1400,
         "height": 900,
         "url": "graphchan.html"
